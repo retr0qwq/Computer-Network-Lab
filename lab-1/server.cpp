@@ -27,7 +27,7 @@ void send_message_to_all(const string &message, SOCKET sender_socket) {
     time_t now = time(nullptr);
     strftime(time_buf, sizeof(time_buf), "[%Y-%m-%d %H:%M:%S]", localtime(&now));
     string msg=string(time_buf) + " " + message;
-    cout<<msg;
+    cout<<msg<<endl;
     for (auto &socket : client_sockets) {
         send(socket, msg.c_str(), msg.size(), 0);
     }
@@ -73,7 +73,7 @@ void handle_client(SOCKET client_socket)
         lock_guard<mutex> lock(client_mutex);
         client_count++;
     }
-    string welcome_msg = string(name) + " 已加入聊天，当前共有"+ to_string(client_count) + " 位用户在线。\n";
+    string welcome_msg = string(name) + " 已加入聊天，当前共有"+ to_string(client_count) + " 位用户在线。";
     send_message_to_all(welcome_msg, client_socket);
     while (server_running) {
         memset(buffer, 0, BUFFER_SIZE);
@@ -84,7 +84,7 @@ void handle_client(SOCKET client_socket)
             string message = string(buffer);
             if(string(buffer)=="bye\n")
             {
-                string leave_msg = string(name) + " 已离开聊天。\n";
+                string leave_msg = string(name) + " 已离开聊天。";
                 send_message_to_all(leave_msg, client_socket);
                 break;
             }
@@ -94,7 +94,7 @@ void handle_client(SOCKET client_socket)
             }
         }
         if (bytes_received <= 0) {
-            string leave_msg = string(name) + " 已离开聊天。\n";
+            string leave_msg = string(name) + " 已离开聊天。";
             send_message_to_all(leave_msg, client_socket);
             break;
         }
