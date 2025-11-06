@@ -38,13 +38,52 @@ int main()
         cout << "WSAStartup failed." << endl;
         return 1;
     }
-
-    // 创建Socket
-    SOCKET client = socket(AF_INET, SOCK_STREAM, 0);
-    if (client == INVALID_SOCKET) {
-        cout << "Socket creation failed." << endl;
-        WSACleanup();
-        return 1;
+    cout<<"Ciallo～(∠・ω< )⌒☆欢迎使用YUZUSOFT聊天软件！"<<endl;
+    cout<<"请输入您的用户名：";
+    getline(cin,username);
+    cout<<username<<",欢迎使用！"<<endl;
+    while(1)
+    {
+        string command;
+        if(!connected)
+        {
+            cout<<"输入/1以更改用户名，输入/2以连接服务器，输入/3以退出软件"<<endl;
+            cout<<"请输入指令：";
+            getline(cin,command);
+            if(command=="/1")
+            {
+                cout<<"请输入新的用户名：";
+                getline(cin,username);
+                cout<<"用户名已更改为"<<username<<endl;
+            }
+            else if(command=="/2")
+            {
+                connect();
+            }
+            else if(command=="/3")
+            {
+                cout<<"正在退出软件，感谢使用YUZUSOFT聊天软件！"<<endl;
+                break;
+            }
+            else
+            {
+                cout<<"无效指令，请重新输入！"<<endl;
+            }
+        }
+        else
+        {
+           if(command=="bye")
+           {
+               cout<<"已断开与服务器的连接！"<<endl;
+               connected=false;
+               closesocket(client);
+           }
+           else
+           {
+               string message="["+username+"]:"+command;
+               send(client, message.c_str(), message.size(), 0);
+           }
+        }
     }
 
 }
