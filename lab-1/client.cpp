@@ -10,7 +10,23 @@ using namespace std;
 string username="0d000721";
 bool connected = false;
 SOCKET client;
-void connect()
+void receive_messages()
+{
+    char buffer[5000];
+    while (connected) {
+        memset(buffer, 0, sizeof(buffer));
+        int bytes_received = recv(client, buffer, sizeof(buffer) - 1, 0);
+        if (bytes_received > 0) 
+        {
+            buffer[bytes_received] = '\0';
+            string message(buffer);
+            cout << message << endl;
+        }
+        else 
+            break;
+    }
+}
+void connect_server()
 {
     sockaddr_in client_addr;
     client_addr.sin_family = AF_INET;
@@ -24,7 +40,11 @@ void connect()
     else
     {
         connected = true;
-        cout << "成功连接到服务器！" << endl;
+        cout << username << "成功连接到服务器！" << endl;
+        cout << "您可以开始发送消息了，输入'bye'以断开连接。" << endl;
+        send(client, username.c_str(), username.size(), 0);
+        thread receive_thread(receive_messages);
+        receive_thread.detach();
     }
 }
 int main() 
@@ -45,11 +65,11 @@ int main()
     while(1)
     {
         string command;
+        getline(cin,command);
         if(!connected)
         {
             cout<<"输入/1以更改用户名，输入/2以连接服务器，输入/3以退出软件"<<endl;
             cout<<"请输入指令：";
-            getline(cin,command);
             if(command=="/1")
             {
                 cout<<"请输入新的用户名：";
@@ -58,7 +78,7 @@ int main()
             }
             else if(command=="/2")
             {
-                connect();
+                connect_server();
             }
             else if(command=="/3")
             {
@@ -76,6 +96,7 @@ int main()
            {
                cout<<"已断开与服务器的连接！"<<endl;
                connected=false;
+               send(client, "bye", 3, 0);
                closesocket(client);
            }
            else

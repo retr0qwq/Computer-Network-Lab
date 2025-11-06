@@ -5,7 +5,7 @@
             "name": "(Windows) Launch",
             "type": "cppvsdbg",
             "request": "launch",
-            "program": "${workspaceFolder}/output/server.exe",
+            "program": "${workspaceFolder}/output/${fileBasenameNoExtension}.exe",
             "args": [],
             "stopAtEntry": true,
             "cwd": "${fileDirname}",
