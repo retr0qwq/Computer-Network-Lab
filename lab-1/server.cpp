@@ -67,7 +67,8 @@ void handle_client(SOCKET client_socket)
 {
     char name[NAME_SIZE];
     char buffer[BUFFER_SIZE];
-    recv(client_socket, name, NAME_SIZE, 0);
+    int name_len = recv(client_socket, name, NAME_SIZE - 1, 0);
+    name[name_len] = '\0'; 
     {
         lock_guard<mutex> lock(client_mutex);
         client_count++;
@@ -80,7 +81,7 @@ void handle_client(SOCKET client_socket)
         if (bytes_received > 0) 
         {
             buffer[bytes_received] = '\0';
-            string message = string(name) + ": " + string(buffer);
+            string message = string(buffer);
             if(string(buffer)=="bye\n")
             {
                 string leave_msg = string(name) + " 已离开聊天。\n";
@@ -101,6 +102,7 @@ void handle_client(SOCKET client_socket)
     {
         lock_guard<mutex> lock(client_mutex);
         client_sockets.erase(remove(client_sockets.begin(), client_sockets.end(), client_socket), client_sockets.end());
+        client_count--;
     }
     closesocket(client_socket);
 }

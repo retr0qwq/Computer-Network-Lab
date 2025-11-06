@@ -65,11 +65,11 @@ int main()
     while(1)
     {
         string command;
-        getline(cin,command);
         if(!connected)
         {
             cout<<"输入/1以更改用户名，输入/2以连接服务器，输入/3以退出软件"<<endl;
-            cout<<"请输入指令：";
+            cout<<"请输入指令："<<endl;
+            getline(cin,command);
             if(command=="/1")
             {
                 cout<<"请输入新的用户名：";
@@ -91,7 +91,8 @@ int main()
             }
         }
         else
-        {
+        {   
+            getline(cin,command);
            if(command=="bye")
            {
                cout<<"已断开与服务器的连接！"<<endl;
