@@ -1,0 +1,24 @@
+{
+    "version": "2.0.0",
+    "tasks": [
+        {
+            "label": "Build and cleanup",
+            "type": "shell",
+            "command": "cmd",
+            "args": [
+                "/c",
+               "cl.exe /std:c++17 /utf-8 /EHsc /nologo /Fd${fileDirname}\\output\\ /Fe${fileDirname}\\output\\${fileBasenameNoExtension}.exe ${fileDirname}\\*.cpp ws2_32.lib && del ${fileDirname}\\*.obj"
+            ],
+            "options": {
+                "cwd": "${fileDirname}"
+            },
+            "problemMatcher": [
+                "$msCompile"
+            ],
+            "group": {
+                "kind": "build",
+                "isDefault": true
+            }
+        }
+    ]
+}

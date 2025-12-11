@@ -42,22 +42,6 @@ void monitor_keyboard() {
              {
                 server_running = false; 
                 cout << "检测到关闭命令，服务器即将关闭..." << endl;
-                /*创建一个客户端套接字，向服务器发送连接请求
-                SOCKET client = socket(AF_INET, SOCK_STREAM, 0);
-                if (client == INVALID_SOCKET) {
-                    cout << "Failed to create client socket." << endl;
-                    break;
-                }
-
-                sockaddr_in server_addr;
-                server_addr.sin_family = AF_INET;
-                server_addr.sin_addr.s_addr = inet_addr("127.0.0.1");
-                server_addr.sin_port = htons(PORT);
-
-                connect(client, (sockaddr*)&server_addr, sizeof(server_addr));
-                closesocket(client);
-                break;
-                */
             }
         }
     }
