@@ -49,17 +49,15 @@ int main() {
     int senderAddrSize = sizeof(senderAddr);
     Packet recvPkt, sendPkt;
     uint32_t expectedSeq = 0;
-    ofstream outFile("received_file.dat", ios::binary);
-    if (!outFile.is_open()) {
-        cerr << "Cannot create output file!" << endl;
-        return -1;
-    }
+    ofstream outFile;
     bool isConnected = false;
+    bool isFirstDataPacket = true;  
     bool finished = false; 
     while(!finished){
         int ret = recvfrom(receiver, (char*)&recvPkt, sizeof(Packet), 0, (sockaddr*)&senderAddr, &senderAddrSize);
         if (ret == SOCKET_ERROR) {
             if (WSAGetLastError() == WSAETIMEDOUT) {
+                // 关闭检测
                 string command;
                 if(_kbhit()){
                     getline(cin, command);
@@ -82,6 +80,7 @@ int main() {
         }
         if (!isConnected) {
             if (recvPkt.head.flags & FLAG_SYN) {
+                // 发送 SYN-ACK
                 cout << "Received SYN. Sending SYN-ACK..." << endl;
                 isConnected = true;
                 expectedSeq = recvPkt.head.seq + 1;
@@ -124,45 +123,61 @@ int main() {
             }
             if (recvPkt.head.flags & FLAG_DATA) {
                 if (recvPkt.head.seq == expectedSeq) {
-                    
-                    // 写入文件
-                    outFile.write(recvPkt.data, recvPkt.head.length);
-                    totalBytesReceived += recvPkt.head.length;
+        
+                    // 第一个数据为文件名
+                    if (isFirstDataPacket) {
+                        char filename[256];
+                        memcpy(filename, recvPkt.data, recvPkt.head.length);
+                        filename[recvPkt.head.length] = '\0'; 
 
-                    expectedSeq += recvPkt.head.length;
-
-                    // 发送 ACK
-                    sendPkt.reset();
-                    sendPkt.head.flags = FLAG_ACK;
-                    sendPkt.head.ack = expectedSeq; 
-                    sendPkt.head.seq = 0; 
-                    sendPkt.update_checksum();
-
-                    sendto(receiver, (char*)&sendPkt, sizeof(PacketHeader), 0, (sockaddr*)&senderAddr, senderAddrSize);
-                } 
-                else if (recvPkt.head.seq < expectedSeq) {
-                    // 收到重复包 
-                    cout << "[DUPLICATE] Expected " << expectedSeq << " got " << recvPkt.head.seq << endl;
-                    
-                    sendPkt.reset();
-                    sendPkt.head.flags = FLAG_ACK;
-                    sendPkt.head.ack = expectedSeq;
-                    sendPkt.update_checksum();
-                    sendto(receiver, (char*)&sendPkt, sizeof(PacketHeader), 0, (sockaddr*)&senderAddr, senderAddrSize);
+                        // 用收到的文件名打开文件
+                        outFile.open(filename, ios::binary);
+                        cout << "Receiving file: " << filename << endl;
+                        isFirstDataPacket = false; 
+                    } 
                 }
-                else {
-                    cout << "[OUT_OF_ORDER] Expected " << expectedSeq << " got " << recvPkt.head.seq << endl;
+                else{
+                    if (recvPkt.head.seq == expectedSeq) {
                     
-                    // 触发发送方快重传
-                    sendPkt.reset();
-                    sendPkt.head.flags = FLAG_ACK;
-                    sendPkt.head.ack = expectedSeq;
-                    sendPkt.update_checksum();
-                    sendto(receiver, (char*)&sendPkt, sizeof(PacketHeader), 0, (sockaddr*)&senderAddr, senderAddrSize);
+                        // 写入文件
+                        outFile.write(recvPkt.data, recvPkt.head.length);
+                        totalBytesReceived += recvPkt.head.length;
+
+                        expectedSeq += recvPkt.head.length;
+
+                        // 发送 ACK
+                        sendPkt.reset();
+                        sendPkt.head.flags = FLAG_ACK;
+                        sendPkt.head.ack = expectedSeq; 
+                        sendPkt.head.seq = 0; 
+                        sendPkt.update_checksum();
+
+                        sendto(receiver, (char*)&sendPkt, sizeof(PacketHeader), 0, (sockaddr*)&senderAddr, senderAddrSize);
+                    } 
+                    else if (recvPkt.head.seq < expectedSeq) {
+                        // 收到重复包 
+                        cout << "[DUPLICATE] Expected " << expectedSeq << " got " << recvPkt.head.seq << endl;
+                        
+                        sendPkt.reset();
+                        sendPkt.head.flags = FLAG_ACK;
+                        sendPkt.head.ack = expectedSeq;
+                        sendPkt.update_checksum();
+                        sendto(receiver, (char*)&sendPkt, sizeof(PacketHeader), 0, (sockaddr*)&senderAddr, senderAddrSize);
+                    }
+                    else {
+                        cout << "[OUT_OF_ORDER] Expected " << expectedSeq << " got " << recvPkt.head.seq << endl;
+                        
+                        // 触发发送方快重传
+                        sendPkt.reset();
+                        sendPkt.head.flags = FLAG_ACK;
+                        sendPkt.head.ack = expectedSeq;
+                        sendPkt.update_checksum();
+                        sendto(receiver, (char*)&sendPkt, sizeof(PacketHeader), 0, (sockaddr*)&senderAddr, senderAddrSize);
+                    }
                 }
             } 
             else {
-                cout << "Out-of-order packet. Expected seq: " << expectedSeq << ", but got: " << recvPkt.head.seq << endl;
+                cout << "[OUT_OF_ORDER] Expected: " << expectedSeq << " got " << recvPkt.head.seq << endl;
             }
             sendPkt.reset();
             sendPkt.head.seq = 0;
