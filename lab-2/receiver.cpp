@@ -116,6 +116,10 @@ int main() {
                 sendPkt.head.flags = FLAG_FIN;      
                 sendPkt.update_checksum();
                 sendto(receiver, (char*)&sendPkt, sizeof(PacketHeader), 0, (sockaddr*)&senderAddr, senderAddrSize);
+                if (outFile.is_open()) {
+                    outFile.close();
+                    cout << "File closed." << endl;
+                }
                 cout << "Connection closed by sender." << endl;
                 isConnected = false;
                 expectedSeq = 0;
@@ -123,23 +127,19 @@ int main() {
             }
             if (recvPkt.head.flags & FLAG_DATA) {
                 if (recvPkt.head.seq == expectedSeq) {
-        
-                    // 第一个数据为文件名
+                
                     if (isFirstDataPacket) {
-                        char filename[256];
-                        memcpy(filename, recvPkt.data, recvPkt.head.length);
-                        filename[recvPkt.head.length] = '\0'; 
+                    char filename[256];
+                    memcpy(filename, recvPkt.data, recvPkt.head.length);
+                    filename[recvPkt.head.length] = '\0'; 
 
-                        // 用收到的文件名打开文件
-                        outFile.open(filename, ios::binary);
-                        cout << "Receiving file: " << filename << endl;
-                        isFirstDataPacket = false; 
+                    // 用收到的文件名打开文件
+                    outFile.open(filename, ios::binary);
+                    cout << "Receiving file: " << filename << endl;
+                    isFirstDataPacket = false; 
                     } 
-                }
-                else{
-                    if (recvPkt.head.seq == expectedSeq) {
-                    
-                        // 写入文件
+                    else {
+                    // 写入文件
                         outFile.write(recvPkt.data, recvPkt.head.length);
                         totalBytesReceived += recvPkt.head.length;
 
@@ -153,27 +153,27 @@ int main() {
                         sendPkt.update_checksum();
 
                         sendto(receiver, (char*)&sendPkt, sizeof(PacketHeader), 0, (sockaddr*)&senderAddr, senderAddrSize);
-                    } 
-                    else if (recvPkt.head.seq < expectedSeq) {
-                        // 收到重复包 
-                        cout << "[DUPLICATE] Expected " << expectedSeq << " got " << recvPkt.head.seq << endl;
-                        
-                        sendPkt.reset();
-                        sendPkt.head.flags = FLAG_ACK;
-                        sendPkt.head.ack = expectedSeq;
-                        sendPkt.update_checksum();
-                        sendto(receiver, (char*)&sendPkt, sizeof(PacketHeader), 0, (sockaddr*)&senderAddr, senderAddrSize);
                     }
-                    else {
-                        cout << "[OUT_OF_ORDER] Expected " << expectedSeq << " got " << recvPkt.head.seq << endl;
-                        
-                        // 触发发送方快重传
-                        sendPkt.reset();
-                        sendPkt.head.flags = FLAG_ACK;
-                        sendPkt.head.ack = expectedSeq;
-                        sendPkt.update_checksum();
-                        sendto(receiver, (char*)&sendPkt, sizeof(PacketHeader), 0, (sockaddr*)&senderAddr, senderAddrSize);
-                    }
+                }
+                else if (recvPkt.head.seq < expectedSeq) {
+                    // 收到重复包 
+                    cout << "[DUPLICATE] Expected " << expectedSeq << " got " << recvPkt.head.seq << endl;
+                    
+                    sendPkt.reset();
+                    sendPkt.head.flags = FLAG_ACK;
+                    sendPkt.head.ack = expectedSeq;
+                    sendPkt.update_checksum();
+                    sendto(receiver, (char*)&sendPkt, sizeof(PacketHeader), 0, (sockaddr*)&senderAddr, senderAddrSize);
+                }
+                else {
+                    cout << "[OUT_OF_ORDER] Expected " << expectedSeq << " got " << recvPkt.head.seq << endl;
+                    
+                    // 触发发送方快重传
+                    sendPkt.reset();
+                    sendPkt.head.flags = FLAG_ACK;
+                    sendPkt.head.ack = expectedSeq;
+                    sendPkt.update_checksum();
+                    sendto(receiver, (char*)&sendPkt, sizeof(PacketHeader), 0, (sockaddr*)&senderAddr, senderAddrSize);
                 }
             } 
             else {
