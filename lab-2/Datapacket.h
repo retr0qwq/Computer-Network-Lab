@@ -28,7 +28,7 @@ public:
     void reset();
     Packet () { reset(); }
     void print(const char* tag="Packet");
-    bool check_checksum() { return head.checksum == calculate_checksum(); };
+    bool check_checksum() { return calculate_checksum() == 0; };
     void update_checksum();
     void load_data(const char* buffer, uint16_t size);
 private:

@@ -83,7 +83,7 @@ int main() {
                 // 发送 SYN-ACK
                 cout << "Received SYN. Sending SYN-ACK..." << endl;
                 isConnected = true;
-                expectedSeq = recvPkt.head.seq + 1;
+                expectedSeq = recvPkt.head.seq + recvPkt.head.length;
                 sendPkt.reset();
                 sendPkt.head.seq = 0;
                 sendPkt.head.ack = expectedSeq;
@@ -122,6 +122,7 @@ int main() {
                 }
                 cout << "Connection closed by sender." << endl;
                 isConnected = false;
+                isFirstDataPacket = true;
                 expectedSeq = 0;
                 continue;
             }
@@ -130,13 +131,15 @@ int main() {
                 
                     if (isFirstDataPacket) {
                     char filename[256];
+                    string outputDir = "testcases_received";
                     memcpy(filename, recvPkt.data, recvPkt.head.length);
                     filename[recvPkt.head.length] = '\0'; 
-
+                    string fullPath = outputDir + "\\" + string(filename);
                     // 用收到的文件名打开文件
-                    outFile.open(filename, ios::binary);
+                    outFile.open(fullPath, ios::binary | ios::trunc);
                     cout << "Receiving file: " << filename << endl;
                     isFirstDataPacket = false; 
+                    expectedSeq += recvPkt.head.length;
                     } 
                     else {
                     // 写入文件
@@ -144,48 +147,27 @@ int main() {
                         totalBytesReceived += recvPkt.head.length;
 
                         expectedSeq += recvPkt.head.length;
-
-                        // 发送 ACK
-                        sendPkt.reset();
-                        sendPkt.head.flags = FLAG_ACK;
-                        sendPkt.head.ack = expectedSeq; 
-                        sendPkt.head.seq = 0; 
-                        sendPkt.update_checksum();
-
-                        sendto(receiver, (char*)&sendPkt, sizeof(PacketHeader), 0, (sockaddr*)&senderAddr, senderAddrSize);
                     }
                 }
                 else if (recvPkt.head.seq < expectedSeq) {
                     // 收到重复包 
                     cout << "[DUPLICATE] Expected " << expectedSeq << " got " << recvPkt.head.seq << endl;
-                    
-                    sendPkt.reset();
-                    sendPkt.head.flags = FLAG_ACK;
-                    sendPkt.head.ack = expectedSeq;
-                    sendPkt.update_checksum();
-                    sendto(receiver, (char*)&sendPkt, sizeof(PacketHeader), 0, (sockaddr*)&senderAddr, senderAddrSize);
                 }
                 else {
                     cout << "[OUT_OF_ORDER] Expected " << expectedSeq << " got " << recvPkt.head.seq << endl;
-                    
-                    // 触发发送方快重传
-                    sendPkt.reset();
-                    sendPkt.head.flags = FLAG_ACK;
-                    sendPkt.head.ack = expectedSeq;
-                    sendPkt.update_checksum();
-                    sendto(receiver, (char*)&sendPkt, sizeof(PacketHeader), 0, (sockaddr*)&senderAddr, senderAddrSize);
                 }
+                sendPkt.reset();
+                sendPkt.head.seq = 0;
+                sendPkt.head.ack = expectedSeq;
+                sendPkt.head.flags = FLAG_ACK;
+                sendPkt.update_checksum();
+                sendto(receiver, (char*)&sendPkt, sizeof(PacketHeader), 0, (sockaddr*)&senderAddr, senderAddrSize);
+                cout << "Sent ACK for seq: " << expectedSeq << endl;
             } 
             else {
-                cout << "[OUT_OF_ORDER] Expected: " << expectedSeq << " got " << recvPkt.head.seq << endl;
+                cout << "[UNK] Received unknown packet type. Discarding." << endl;
+                continue;
             }
-            sendPkt.reset();
-            sendPkt.head.seq = 0;
-            sendPkt.head.ack = expectedSeq;
-            sendPkt.head.flags = FLAG_ACK;
-            sendPkt.update_checksum();
-            sendto(receiver, (char*)&sendPkt, sizeof(PacketHeader), 0, (sockaddr*)&senderAddr, senderAddrSize);
-            cout << "Sent ACK for seq: " << expectedSeq << endl;
         }
     }
 

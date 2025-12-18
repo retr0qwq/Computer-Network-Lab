@@ -19,6 +19,38 @@
                 "kind": "build",
                 "isDefault": true
             }
+        },
+        {
+            "label": "build sender",
+            "type": "shell",
+            "command": "cl.exe",
+            "args": [
+                "/std:c++17",
+                "/utf-8",
+                "/EHsc",
+                "/nologo",
+                "${fileDirname}\\sender.cpp",
+                "${fileDirname}\\Datapacket.cpp",
+                "/Fe:${fileDirname}\\output\\sender.exe",
+                "ws2_32.lib"
+            ],
+            "group": "build"
+        },
+        {
+            "label": "build receiver",
+            "type": "shell",
+            "command": "cl.exe",
+            "args": [
+                "/std:c++17",
+                "/utf-8",
+                "/EHsc",
+                "/nologo",
+                "${fileDirname}\\receiver.cpp",
+                "${fileDirname}\\Datapacket.cpp",
+                "/Fe:${fileDirname}\\output\\receiver.exe",
+                "ws2_32.lib"
+            ],
+            "group": "build"
         }
     ]
 }
