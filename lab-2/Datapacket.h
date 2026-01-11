@@ -3,7 +3,7 @@
 #include<cstring>
 #include<iomanip>
 using namespace std;
-#define MAX_DATA_SIZE 1460
+#define MAX_DATA_SIZE 14600
 const uint16_t FLAG_SYN  = 0x01;
 const uint16_t FLAG_ACK  = 0x02;
 const uint16_t FLAG_FIN  = 0x04;

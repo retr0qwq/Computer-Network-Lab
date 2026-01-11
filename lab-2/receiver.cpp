@@ -8,12 +8,13 @@
 #include <string>
 #include <ctime>
 #include "Datapacket.h" 
-
+#include <map>
 #pragma comment(lib, "ws2_32.lib") 
 using namespace std;
 #define SERVER_PORT 8080
 int timeout=1000;
 long long totalBytesReceived = 0;
+map<uint32_t, Packet> outOfOrderBuffer; 
 int main() {
     SetConsoleOutputCP(CP_UTF8);  // 设置控制台输出为 UTF-8
     SetConsoleCP(CP_UTF8);        // 设置控制台输入为 UTF-8
@@ -83,7 +84,8 @@ int main() {
                 // 发送 SYN-ACK
                 cout << "Received SYN. Sending SYN-ACK..." << endl;
                 isConnected = true;
-                expectedSeq = recvPkt.head.seq + recvPkt.head.length;
+                outOfOrderBuffer.clear();
+                expectedSeq = recvPkt.head.seq + 1;
                 sendPkt.reset();
                 sendPkt.head.seq = 0;
                 sendPkt.head.ack = expectedSeq;
@@ -116,6 +118,16 @@ int main() {
                 sendPkt.head.flags = FLAG_FIN;      
                 sendPkt.update_checksum();
                 sendto(receiver, (char*)&sendPkt, sizeof(PacketHeader), 0, (sockaddr*)&senderAddr, senderAddrSize);
+                while (true) {
+                    int ret = recvfrom(receiver, (char*)&recvPkt, sizeof(Packet), 0, (sockaddr*)&senderAddr, &senderAddrSize);
+                    if (ret > 0 && (recvPkt.head.flags & FLAG_ACK)) {
+                        cout << "Received ACK for FIN. Connection closed." << endl;
+                        break; 
+                    }
+                    else {
+                        sendto(receiver, (char*)&sendPkt, sizeof(PacketHeader), 0, (sockaddr*)&senderAddr, senderAddrSize);
+                    }
+                }
                 if (outFile.is_open()) {
                     outFile.close();
                     cout << "File closed." << endl;
@@ -145,8 +157,16 @@ int main() {
                     // 写入文件
                         outFile.write(recvPkt.data, recvPkt.head.length);
                         totalBytesReceived += recvPkt.head.length;
-
                         expectedSeq += recvPkt.head.length;
+                        // 检查乱序缓冲区
+                        while (outOfOrderBuffer.count(expectedSeq)) {
+                            Packet bufferedPkt = outOfOrderBuffer[expectedSeq];
+                            cout << "[BUFFER] Seq=" << bufferedPkt.head.seq << " Len=" << bufferedPkt.head.length << endl;
+                            outFile.write(bufferedPkt.data, bufferedPkt.head.length);
+                            totalBytesReceived += bufferedPkt.head.length;
+                            expectedSeq += bufferedPkt.head.length;
+                            outOfOrderBuffer.erase(bufferedPkt.head.seq);
+                        }
                     }
                 }
                 else if (recvPkt.head.seq < expectedSeq) {
@@ -155,6 +175,7 @@ int main() {
                 }
                 else {
                     cout << "[OUT_OF_ORDER] Expected " << expectedSeq << " got " << recvPkt.head.seq << endl;
+                    outOfOrderBuffer[recvPkt.head.seq] = recvPkt;
                 }
                 sendPkt.reset();
                 sendPkt.head.seq = 0;

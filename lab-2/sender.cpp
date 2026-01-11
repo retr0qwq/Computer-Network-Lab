@@ -5,17 +5,28 @@
 #include <ctime>
 #include <winsock2.h>
 #include <ws2tcpip.h>
+#include <deque>
+#include <chrono>
 #include "Datapacket.h"
 
 #pragma comment(lib, "ws2_32.lib")
 
 using namespace std;
+using Clock = std::chrono::high_resolution_clock;
 #define SERVER_IP "127.0.0.1"
-#define SERVER_PORT 8080
-#define TIMEOUT_MS 100        
-#define WINDOW_SIZE 5         
-#define MAX_MSS 1024 
+#define SERVER_PORT 8081
+#define TIMEOUT_MS 500         
+#define MAX_MSS 10000
 
+enum RenoState {
+    SLOW_START,         // 慢启动
+    CONGESTION_AVOIDANCE, // 拥塞避免
+    FAST_RECOVERY       // 快恢复
+};
+RenoState state = SLOW_START;
+double cwnd = MAX_MSS;
+uint32_t ssthresh = 64 * MAX_MSS;
+int dupAckCount = 0;
 SOCKET senderSocket;
 sockaddr_in recvAddr;
 int addrLen = sizeof(recvAddr);
@@ -24,8 +35,11 @@ uint32_t nextSeqNum = 0;    // 下一个要发送的序号
 clock_t timerStart;         
 bool timerRunning = false;
 bool finished = false;
-vector<Packet> sendBuffer; 
-
+deque<Packet> sendBuffer; 
+Clock::time_point startTime;
+Clock::time_point endTime;
+bool started = false;
+uint64_t totalBytesSent = 0;
 void resetSender() {
     base = 0;
     nextSeqNum = 0;
@@ -95,8 +109,8 @@ bool handshake(){
     sendPkt.head.ack = recvPkt.head.seq + 1; 
     log("SEND", sendPkt.head.seq, sendPkt.head.ack, FLAG_ACK);
 
-    base = 0; 
-    nextSeqNum = 0;
+    base = 1; 
+    nextSeqNum = 1;
     cout << "=== Connection Established ===" << endl;
     return true;
 }
@@ -111,18 +125,21 @@ void transferFile(const string& filename){
     file.seekg(0, ios::beg); // 回到文件头
 
     cout << "Start Sending File: " << filename << " (" << fileSize << " bytes)" << endl;
-
-    // 将 Socket 设置为非阻塞 (或者极短超时)，方便我们在循环里同时处理发送和接收
-    int nonBlockTimeout = 10; // 10ms
+    state = SLOW_START;
+    cwnd = MAX_MSS;
+    ssthresh = 64 * MAX_MSS;
+    dupAckCount = 0;
+    cout << "[Reno Init] cwnd:" << cwnd << " ssthresh:" << ssthresh << endl;
+    // 设置非阻塞接收
+    int nonBlockTimeout = 50; 
     setsockopt(senderSocket, SOL_SOCKET, SO_RCVTIMEO, (const char*)&nonBlockTimeout, sizeof(nonBlockTimeout));
 
     Packet recvPkt, namePkt;
     namePkt.reset();
     namePkt.head.seq = nextSeqNum;
-    namePkt.head.flags = FLAG_DATA; // 依然是数据包
+    namePkt.head.flags = FLAG_DATA;
     
-    // 拷贝文件名到数据区 (只拷贝名字，不拷贝路径)
-    // 简单提取文件名的逻辑：
+    // 拷贝文件名到数据区
     string pureName = filename;
     size_t lastSlash = filename.find_last_of("/\\");
     if (lastSlash != string::npos) {
@@ -131,29 +148,30 @@ void transferFile(const string& filename){
     int nameLen = (int)pureName.length();
     strcpy(namePkt.data, pureName.c_str());
     namePkt.head.length = (uint16_t)pureName.length();
-
+    fileSize += nameLen; 
+    if (!started) {
+        startTime = Clock::now();
+        started = true;
+    }
+    totalBytesSent += nameLen;  
     sendPacket(namePkt); // 发送文件名包
     cout << "[SEND_NAME] " << pureName << endl;
 
     // 加入缓冲区等待 ACK
     sendBuffer.push_back(namePkt);
     if (base == nextSeqNum) startTimer();
-    
-    // 序号前进 (接收方会根据这个长度更新 expectedSeq)
+
     nextSeqNum += namePkt.head.length;
-    // === 主循环：只要还有未确认的数据，就继续 ===
     while (base < fileSize) {
         
-        // --- A. 发送窗口内的新数据 ---
-        // 只要 窗口没满 且 还有数据没读完
-        while (nextSeqNum < base + WINDOW_SIZE * MAX_MSS && nextSeqNum < fileSize) {
+        // 发送窗口内的新数据 
+        while (nextSeqNum < base + (int) cwnd && nextSeqNum < fileSize) {
             Packet pkt;
             pkt.reset();
             pkt.head.seq = nextSeqNum;
             pkt.head.flags = FLAG_DATA;
             
-            // 读取文件数据
-            file.seekg(nextSeqNum - nameLen);
+            file.seekg(nextSeqNum - nameLen- 1);
             int bytesToRead = min((long long)MAX_MSS, fileSize - nextSeqNum);
             file.read(pkt.data, bytesToRead);
             pkt.head.length = bytesToRead;
@@ -161,10 +179,8 @@ void transferFile(const string& filename){
             sendPacket(pkt);
             cout << "[SEND_DATA] Seq=" << nextSeqNum << " Len=" << bytesToRead << endl;
 
-            // 加入缓冲区（为了重传）
+            // 加入缓冲区
             sendBuffer.push_back(pkt);
-
-            // 如果是第一个包，启动计时器
             if (base == nextSeqNum) {
                 startTimer();
             }
@@ -172,65 +188,101 @@ void transferFile(const string& filename){
             nextSeqNum += bytesToRead;
         }
 
-        // --- B. 接收 ACK ---
+        //  接收 ACK 
         int ret = recvfrom(senderSocket, (char*)&recvPkt, sizeof(Packet), 0, (sockaddr*)&recvAddr, &addrLen);
         if (ret > 0) {
             if (recvPkt.check_checksum() && (recvPkt.head.flags & FLAG_ACK)) {
                 uint32_t ack = recvPkt.head.ack;
                 
-                // 累计确认：如果收到的 ack > base，说明 ack 之前的数据都到了
+                // 累计确认
                 if (ack > base) {
                     cout << "[RECV_ACK] Ack=" << ack << " (New Base)" << endl;
-                    
-                    base = ack; // 滑动窗口左沿
-                    stopTimer(); // 收到新ACK，停止旧计时器
-
-                    // 清理缓冲区中已经确认的包
-                    // 实际实现中，vector删除头部效率低，这里简单演示逻辑
-                    // 更好的做法是用 deque 或仅移动指针
-                    vector<Packet> newBuffer;
-                    for (auto& p : sendBuffer) {
-                        if (p.head.seq >= base) newBuffer.push_back(p);
+                    uint32_t newlyAcked = ack - base;
+                    totalBytesSent  += newlyAcked;
+                    base = ack; 
+                    if (state == SLOW_START) {
+                        cwnd += MAX_MSS;
+                        if (cwnd >= ssthresh) {
+                            state = CONGESTION_AVOIDANCE;
+                        }
+                    } 
+                    else if (state == CONGESTION_AVOIDANCE) {
+                        cwnd += MAX_MSS * ((double)MAX_MSS / cwnd);
+                    } 
+                    else if (state == FAST_RECOVERY) {
+                        state = CONGESTION_AVOIDANCE;
+                        cwnd = ssthresh;
                     }
-                    sendBuffer = newBuffer;
+                    dupAckCount = 0; // 重置重复ACK计数
+                    cout << "[Reno] cwnd:" << cwnd << " ssthresh:" << ssthresh << endl;
+                    stopTimer(); 
 
-                    // 如果还有未确认的包，重启计时器
+                    while( !sendBuffer.empty() && sendBuffer[0].head.seq + sendBuffer[0].head.length <= base) {
+                        sendBuffer.pop_front();
+                    }
+
                     if (base < nextSeqNum) {
                         startTimer();
                     }
-                } else {
-                    cout << "[RECV_ACK] Duplicate Ack=" << ack << endl;
-                    // TODO: 后期在这里实现 Reno 的快重传 (3次重复ACK)
+                }
+                else {
+                    dupAckCount++;
+
+                    if (state == FAST_RECOVERY) {
+                        cwnd += MAX_MSS;
+                    }
+                    else if (dupAckCount == 3) {
+                        // 触发快重传
+                        cout << "[Fast Retransmit] 3 Dup ACKs " << endl;
+                        ssthresh = max((double)10 * MAX_MSS, cwnd / 2);
+                        cwnd = ssthresh + 3 * MAX_MSS;
+                        state = FAST_RECOVERY;
+                        
+                        if (!sendBuffer.empty()) {
+                            sendPacket(sendBuffer[0]);
+                            cout << "[FAST RESEND] Seq=" << sendBuffer[0].head.seq << endl;
+                        }
+                    }
                 }
             }
         }
 
-        // --- C. 超时重传 (Timeout) ---
+        // 超时重传
         if (isTimerExpired()) {
             cout << "[TIMEOUT] Resending Window from " << base << endl;
-            startTimer(); // 重置计时器
-
-            // 简单的 GBN 重传：重传缓冲区里所有的包
-            for (auto& pkt : sendBuffer) {
-                sendPacket(pkt);
-                cout << "[RESEND] Seq=" << pkt.head.seq << endl;
+            ssthresh = max((double)2 * MAX_MSS, cwnd / 2);
+            cwnd = MAX_MSS; 
+            // 重新进入慢启动
+            state = SLOW_START;
+            dupAckCount = 0;
+            stopTimer();
+            startTimer(); 
+            if (!sendBuffer.empty()) {
+                sendPacket(sendBuffer[0]); 
+                cout << "[TIMEOUT RESEND] Seq=" << sendBuffer[0].head.seq << endl;
             }
         }
     }
     cout << "=== File Transfer Completed ===" << endl;
+    endTime = Clock::now();
+    chrono::duration<double> elapsedSeconds = endTime - startTime;
+    double throughput = totalBytesSent / elapsedSeconds.count() / 1024;0; // KB/s
+    cout << "Total Bytes Sent: " << totalBytesSent << " bytes" << endl;
+    cout << "Total Time: " << elapsedSeconds.count() << " seconds" << endl;
+    cout << "Throughput: " << throughput << " KB/s" << endl;
 }
 
 void teardown(){
     Packet sendPkt, recvPkt;
 
-    // --- Step 1: 发送 FIN ---
+    // 发送 FIN
     sendPkt.reset();
     sendPkt.head.flags = FLAG_FIN;
     sendPkt.head.seq = nextSeqNum; // 接着最后的序号
     sendPacket(sendPkt);
+    nextSeqNum += 1; 
     log("SEND_FIN", sendPkt.head.seq, 0, FLAG_FIN);
 
-    // --- Step 2: 等待 ACK ---
     int timeout = 1000;
     setsockopt(senderSocket, SOL_SOCKET, SO_RCVTIMEO, (const char*)&timeout, sizeof(timeout));
     
@@ -240,11 +292,10 @@ void teardown(){
             log("RECV_ACK", 0, recvPkt.head.ack, FLAG_ACK);
             break; 
         }
-        // 简单重传 FIN
+        // 重传 FIN
         if (ret <= 0) sendPacket(sendPkt);
     }
 
-    // --- Step 3: 等待 Server 的 FIN ---
     cout << "Waiting for Server FIN..." << endl;
     while(true) {
         int ret = recvfrom(senderSocket, (char*)&recvPkt, sizeof(Packet), 0, (sockaddr*)&recvAddr, &addrLen);
@@ -254,16 +305,12 @@ void teardown(){
         }
     }
 
-    // --- Step 4: 发送最后的 ACK ---
     sendPkt.reset();
     sendPkt.head.flags = FLAG_ACK;
-    sendPkt.head.ack = recvPkt.head.seq; // 这里的seq其实不重要了
+    sendPkt.head.ack = recvPkt.head.seq; 
     sendPacket(sendPkt);
     log("SEND_ACK", 0, sendPkt.head.ack, FLAG_ACK);
 
-    // 等待 2MSL (这里简单 sleep 一下，模拟 TIME_WAIT)
-    cout << "Entering TIME_WAIT..." << endl;
-    Sleep(1000); 
     cout << "=== Connection Closed ===" << endl;
 }
 int main(){
